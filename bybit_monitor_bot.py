@@ -14,6 +14,7 @@ SETUP:
 
 import json, time, threading, requests, websocket, ssl, os
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 # On Railway: set BOT_TOKEN in Variables tab
@@ -243,16 +244,40 @@ def alert_loop():
         time.sleep(INTERVAL_SEC)
 
 
+# ── Health check server (required by Railway) ─────────────────────────────────
+
+def health_server():
+    """Binds to $PORT so Railway doesn't kill the container."""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    PORT = int(os.environ.get("PORT", 8080))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            qty, usd = wall_at_target()
+            status = f"BARD/USDT wall @ {TARGET_PRICE}: {fmt(usd)} ({qty:,.0f} BARD) | subs={len(subscribers)}"
+            body = status.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *args):
+            pass  # silence access logs
+
+    print(f"[HTTP] Listening on port {PORT}")
+    HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import sys
     if "YOUR_" in BOT_TOKEN:
-        print("❌  Fill in BOT_TOKEN at the top of the file.")
+        print("❌  Set BOT_TOKEN environment variable on Railway (Variables tab).")
         sys.exit(1)
 
-    threading.Thread(target=ws_loop,  daemon=True).start()
-    threading.Thread(target=tg_poll,  daemon=True).start()
+    threading.Thread(target=ws_loop,       daemon=True).start()
+    threading.Thread(target=tg_poll,       daemon=True).start()
+    threading.Thread(target=health_server, daemon=True).start()
 
     try:
         alert_loop()
